@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from supabase import create_client, Client
 
-# 1. Запуск фейкового HTTP-сервера для Render (чтобы проходила проверка порта)
+# Фейковый HTTP-сервер для Render (чтобы веб-сервис не засыпал)
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -16,10 +16,9 @@ def run_http_server():
     server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# Запускаем HTTP-сервер в отдельном потоке
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# 2. Инициализация бота и Supabase
+# Инициализация
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -45,7 +44,8 @@ def list_laptops(message):
             text += f"▪️ **{item.get('title', 'Без названия')}** — {item.get('price', 0)} грн\nСтатус: {item.get('status', 'N/A')}\n\n"
         bot.reply_to(message, text, parse_mode='Markdown')
     except Exception as e:
-        bot.reply_to(message, f"Ошибка при получении данных: {e}")
+        print(f"Ошибка Supabase: {e}")
+        bot.reply_to(message, f"Ошибка при получении данных из базы.")
 
-print("Бот запущен...")
-bot.infinity_polling()
+print("Бот запущен и готов к работе...")
+bot.infinity_polling(skip_pending=True)
