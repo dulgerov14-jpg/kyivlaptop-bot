@@ -1,62 +1,51 @@
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
-from supabase import create_client
+from supabase import create_client, Client
 
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+# 1. Запуск фейкового HTTP-сервера для Render (чтобы проходила проверка порта)
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+# Запускаем HTTP-сервер в отдельном потоке
+threading.Thread(target=run_http_server, daemon=True).start()
+
+# 2. Инициализация бота и Supabase
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-user_data = {}
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @bot.message_handler(commands=['start'])
-def send_welcome(bot_message):
-    bot.send_message(
-        bot_message.chat.id, 
-        "Привет! Я админ-бот твоего сайта по ноутбукам.\n"
-        "Напиши /add, чтобы добавить новый ноутбук в каталог."
-    )
+def send_welcome(message):
+    bot.reply_to(message, "Привет! Я бот для управления каталогом KyivLaptop. Используй /laptops для просмотра списка.")
 
-@bot.message_handler(commands=['add'])
-def add_laptop(message):
-    msg = bot.send_message(message.chat.id, "Введи название и модель ноутбука (например: *Asus ROG Strix*):", parse_mode="Markdown")
-    bot.register_next_step_handler(msg, process_title)
-
-def process_title(message):
-    user_data[message.chat.id] = {'title': message.text}
-    msg = bot.send_message(message.chat.id, "Введи цену (например: *25000 грн*):", parse_mode="Markdown")
-    bot.register_next_step_handler(msg, process_price)
-
-def process_price(message):
-    user_data[message.chat.id]['price'] = message.text
-    msg = bot.send_message(message.chat.id, "Введи характеристики (процессор, видеокарта, ОЗУ):")
-    bot.register_next_step_handler(msg, process_specs)
-
-def process_specs(message):
-    user_data[message.chat.id]['specs'] = message.text
-    msg = bot.send_message(message.chat.id, "Отправь фото ноутбука:")
-    bot.register_next_step_handler(msg, process_photo)
-
-def process_photo(message):
-    if not message.photo:
-        msg = bot.send_message(message.chat.id, "Пожалуйста, отправь именно фото! Попробуй еще раз:")
-        bot.register_next_step_handler(msg, process_photo)
-        return
-
-    file_id = message.photo[-1].file_id
-    file_info = bot.get_file(file_id)
-    photo_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-    
-    user_data[message.chat.id]['photo_url'] = photo_url
-    user_data[message.chat.id]['status'] = 'В наличии'
-
-    data = user_data[message.chat.id]
+@bot.message_handler(commands=['laptops'])
+def list_laptops(message):
     try:
-        supabase.table('laptops').insert(data).execute()
-        bot.send_message(message.chat.id, "✅ Ноутбук успешно добавлен и уже появился на сайте!")
+        response = supabase.table('laptops').select('*').execute()
+        laptops = response.data
+        if not laptops:
+            bot.reply_to(message, "В базе пока нет ноутбуков.")
+            return
+        
+        text = "📋 **Список ноутбуков:**\n\n"
+        for item in laptops:
+            text += f"▪️ **{item.get('title', 'Без названия')}** — {item.get('price', 0)} грн\nСтатус: {item.get('status', 'N/A')}\n\n"
+        bot.reply_to(message, text, parse_mode='Markdown')
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка при сохранении в базу: {e}")
+        bot.reply_to(message, f"Ошибка при получении данных: {e}")
 
+print("Бот запущен...")
 bot.infinity_polling()
